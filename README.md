@@ -1,0 +1,2 @@
+# LSComparisonTool
+Livesplit comparison "generator"
