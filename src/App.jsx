@@ -3,13 +3,15 @@ import { XMLParser } from "fast-xml-parser";
 import { formatTime, timeToMs } from "./utility/TimeFunctions";
 import Spreadsheet from "react-spreadsheet";
 import ColumnLabels from "./utility/ColumnLabels";
-import _ from "lodash"; // Import lodash for deep comparison
+import _ from "lodash";
+import "./App.css";
 
 const App = () => {
   const [splits, setSplits] = useState([]);
   const [totalTime, setTotalTime] = useState(0);
   const [data, setData] = useState([]);
   const [activatedCell, setActivatedCell] = useState({ row: 0, col: 0 });
+
   useEffect(() => {
     fetch("/example.lss")
       .then((response) => response.text())
@@ -55,7 +57,7 @@ const App = () => {
           { value: split.name },
           { value: formatTime(split.splitTimeMs) },
           { value: formatTime(split.segmentTimeMs) },
-          { value: formatTime(split.goldMs) },
+          { value: formatTime(split.goldMs), readOnly: true, className: "gold" },
         ]);
         setData(updatedData);
       })
@@ -65,49 +67,20 @@ const App = () => {
   const columnLabels = Object.values(ColumnLabels);
   const rowLabels = splits.map((split, index) => [index + 1]);
 
-  const onSegmentTimeChange = (row, col, newData) => {
-    const segmentTimeMs = timeToMs(newData[row][col].value);
-    if (isNaN(segmentTimeMs)) return;
-
-    const prevSplitTimeMs =
-      row === 0
-        ? 0
-        : timeToMs(
-            newData[row - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value
-          );
-    if (isNaN(prevSplitTimeMs)) return;
-
-    const newSplitTimeMs = prevSplitTimeMs + segmentTimeMs;
-    if (newSplitTimeMs < 0) return;
-
-    newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value =
-      formatTime(newSplitTimeMs);
-
-    for (let i = row + 1; i < splits.length; i++) {
-      const segmentTimeMs = timeToMs(
-        newData[i][columnLabels.indexOf(ColumnLabels.SegmentTime)].value
-      );
-      if (isNaN(segmentTimeMs)) return;
-
-      const prevSplitTimeMs = timeToMs(
-        newData[i - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value
-      );
-      if (isNaN(prevSplitTimeMs)) return;
-
-      const newSplitTimeMs = prevSplitTimeMs + segmentTimeMs;
-      if (newSplitTimeMs < 0) return;
-
-      newData[i][columnLabels.indexOf(ColumnLabels.SplitTime)].value =
-        formatTime(newSplitTimeMs);
-    }
-  };
-
-  const onSplitTimeChange = (row, newData) => {
-    const splitTimeMs = timeToMs(
-      newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value
+  const updateTimes = (row, newData, isSegmentTimeChange) => {
+    // Convert currently edited time to milliseconds
+    const currentTimeMs = timeToMs(
+      newData[row][
+        columnLabels.indexOf(
+          isSegmentTimeChange
+            ? ColumnLabels.SegmentTime
+            : ColumnLabels.SplitTime
+        )
+      ].value
     );
-    if (isNaN(splitTimeMs)) return;
+    if (isNaN(currentTimeMs)) return;
 
+    // Get previous split time if it's not the first row
     const prevSplitTimeMs =
       row === 0
         ? 0
@@ -116,12 +89,32 @@ const App = () => {
           );
     if (isNaN(prevSplitTimeMs)) return;
 
-    const newSegmentTimeMs = splitTimeMs - prevSplitTimeMs;
-    if (newSegmentTimeMs < 0) return;
+    // Calculate new time for the currently edited row
+    const newTimeMs = isSegmentTimeChange
+      ? prevSplitTimeMs + currentTimeMs
+      : currentTimeMs - prevSplitTimeMs;
+    if (newTimeMs < 0) return;
 
-    newData[row][columnLabels.indexOf(ColumnLabels.SegmentTime)].value =
-      formatTime(newSegmentTimeMs);
+    // Update the appropriate time for the currently edited row and format it for display
+    newData[row][
+      columnLabels.indexOf(
+        isSegmentTimeChange ? ColumnLabels.SplitTime : ColumnLabels.SegmentTime
+      )
+    ].value = formatTime(newTimeMs);
 
+    const goldTimeMs = timeToMs(
+      newData[row][columnLabels.indexOf(ColumnLabels.Gold)].value
+    );
+
+    if (currentTimeMs < goldTimeMs) {
+      newData[row][columnLabels.indexOf(ColumnLabels.SegmentTime)].className =
+        "error";
+    } else {
+      newData[row][columnLabels.indexOf(ColumnLabels.SegmentTime)].className =
+        "";
+    }
+
+    // Update times from the currently edited row to the end of the splits
     for (let i = row + 1; i < splits.length; i++) {
       const segmentTimeMs = timeToMs(
         newData[i][columnLabels.indexOf(ColumnLabels.SegmentTime)].value
@@ -142,22 +135,15 @@ const App = () => {
   };
 
   const handleChange = (newData) => {
+    // Determine which cell was edited and call the function appropriately
     const row = activatedCell.row;
     const col = activatedCell.column;
-    switch (col) {
-      case columnLabels.indexOf(ColumnLabels.SegmentTime): {
-        onSegmentTimeChange(row, col, newData);
-        break;
-      }
-      case columnLabels.indexOf(ColumnLabels.SplitTime): {
-        onSplitTimeChange(row, newData);
-        break;
-      }
-      default:
-        break;
-    }
 
-    // Only update state if newData is different from current data
+    let isSegmentTimeChange =
+      col === columnLabels.indexOf(ColumnLabels.SegmentTime);
+    updateTimes(row, newData, isSegmentTimeChange);
+
+    // Only update state if new data is different from previous data
     if (!_.isEqual(data, newData)) {
       setData(newData);
     }

@@ -40,3 +40,13 @@
 .read-the-docs {
   color: #888;
 }
+
+.error {
+  background-color: rgb(255, 127, 127);
+}
+
+.gold {
+  background-color: rgb(255, 250, 219);
+  color: rgb(51, 51, 51) !important;
+}
+
