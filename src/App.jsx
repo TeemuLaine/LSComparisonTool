@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { XMLParser } from "fast-xml-parser";
-import {
-  formatTime,
-  msToTime,
-  timeRegex,
-  timeToMs,
-} from "./utility/TimeFunctions";
+import { formatTime, timeToMs } from "./utility/TimeFunctions";
 import Spreadsheet from "react-spreadsheet";
 import ColumnLabels from "./utility/ColumnLabels";
 
@@ -23,39 +18,44 @@ const App = () => {
         const result = parser.parse(xmlString);
         const splitObjects = result.Run.Segments.Segment.map(
           (segment, i, arr) => {
+            // Get segment name
             const name = segment.Name;
-            const time = segment.SplitTimes.SplitTime.RealTime;
-            const ms = timeToMs(time.slice(0, time.indexOf(".") + 4));
 
+            // Get segment time and convert it to milliseconds
+            const time = segment.SplitTimes.SplitTime.RealTime;
+            const splitTimeMs = timeToMs(time.slice(0, time.indexOf(".") + 4));
+
+            // Get gold time and convert it to milliseconds
             const gold = segment.BestSegmentTime.RealTime;
             const goldMs = timeToMs(gold.slice(0, gold.indexOf(".") + 3));
 
+            // Calculate previous segment time and convert it to milliseconds if it's not the first segment
             const prevSegment =
               i === 0 ? 0 : arr[i - 1].SplitTimes.SplitTime.RealTime;
             const prevMs = prevSegment === 0 ? 0 : timeToMs(prevSegment);
 
-            const segmentTimeMs = i === 0 ? ms : ms - prevMs;
-            const segmentTime = msToTime(segmentTimeMs);
+            // Calculate segment time and convert it to milliseconds
+            const segmentTimeMs = i === 0 ? splitTimeMs : splitTimeMs - prevMs;
+
+            // Assign values to split object as milliseconds
             return {
               name,
-              time,
-              ms,
-              gold,
+              splitTimeMs,
               goldMs,
-              segmentTime,
               segmentTimeMs,
             };
           }
         );
 
-        setTotalTime(splitObjects[splitObjects.length - 1].ms);
+        setTotalTime(splitObjects[splitObjects.length - 1].splitTimeMs);
         setSplits(splitObjects);
 
+        // Format times to display in the spreadsheet as time strings
         const updatedData = splitObjects.map((split) => [
           { value: split.name },
-          { value: formatTime(split.time) },
-          { value: formatTime(split.segmentTime) },
-          { value: formatTime(split.gold) },
+          { value: formatTime(split.splitTimeMs) },
+          { value: formatTime(split.segmentTimeMs) },
+          { value: formatTime(split.goldMs) },
         ]);
         setData(updatedData);
         prevDataRef.current = updatedData;
@@ -83,51 +83,32 @@ const App = () => {
         ? 0
         : newData[row - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value;
     let currentSegment = newData[row][col].value;
-    if (
-      (row === 0 || timeRegex.test(prevSplitTime)) &&
-      timeRegex.test(currentSegment)
-    ) {
-      prevSplitTime = row === 0 ? 0 : timeToMs(prevSplitTime);
-      currentSegment = timeToMs(currentSegment);
 
-      newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value =
-        formatTime(msToTime(prevSplitTime + currentSegment));
+    prevSplitTime = row === 0 ? 0 : prevSplitTime;
 
-      onSplitTimeChange(row, newData);
-    } else {
-      console.error("Invalid time format. Expected mm:ss.ms");
-    }
+    newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value =
+      formatTime(prevSplitTime + currentSegment);
+
+    onSplitTimeChange(row, newData);
   };
 
   const onSplitTimeChange = (row, newData) => {
-    if (
-      timeRegex.test(
-        newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value
-      )
-    ) {
-      let sumAsMs =
-        timeToMs(
-          newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value
-        ) -
-        timeToMs(
-          newData[row - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value
-        );
+    let sumAsMs =
+      row === 0
+        ? newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value
+        : newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value -
+          newData[row - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value;
 
-      newData[row][columnLabels.indexOf(ColumnLabels.SegmentTime)].value =
-        formatTime(msToTime(sumAsMs));
+    newData[row][columnLabels.indexOf(ColumnLabels.SegmentTime)].value =
+      formatTime(sumAsMs);
 
-      for (let i = row + 1; i < splits.length; i++) {
-        sumAsMs =
-          timeToMs(
-            newData[i - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value
-          ) +
-          timeToMs(
-            newData[i][columnLabels.indexOf(ColumnLabels.SegmentTime)].value
-          );
+    for (let i = row + 1; i < splits.length; i++) {
+      sumAsMs =
+        newData[i - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value +
+        newData[i][columnLabels.indexOf(ColumnLabels.SegmentTime)].value;
 
-        newData[i][columnLabels.indexOf(ColumnLabels.SplitTime)].value =
-          formatTime(msToTime(sumAsMs));
-      }
+      newData[i][columnLabels.indexOf(ColumnLabels.SplitTime)].value =
+        formatTime(sumAsMs);
     }
   };
 
@@ -137,6 +118,7 @@ const App = () => {
 
     if (change) {
       const { row, col } = change;
+      newData[row][col].value = timeToMs(newData[row][col].value);
       switch (col) {
         case columnLabels.indexOf(ColumnLabels.SegmentTime): {
           onSegmentTimeChange(row, col, newData);
@@ -164,9 +146,7 @@ const App = () => {
         columnLabels={columnLabels}
         rowLabels={rowLabels}
       />
-      <h2>
-        Total Time we have to work with: {formatTime(msToTime(totalTime))}
-      </h2>
+      <h2>Total Time we have to work with: {formatTime(totalTime)}</h2>
     </div>
   );
 };
