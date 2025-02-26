@@ -1,15 +1,15 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { XMLParser } from "fast-xml-parser";
 import { formatTime, timeToMs } from "./utility/TimeFunctions";
 import Spreadsheet from "react-spreadsheet";
 import ColumnLabels from "./utility/ColumnLabels";
+import _ from "lodash"; // Import lodash for deep comparison
 
 const App = () => {
   const [splits, setSplits] = useState([]);
   const [totalTime, setTotalTime] = useState(0);
   const [data, setData] = useState([]);
-  const prevDataRef = useRef([]);
-
+  const [activatedCell, setActivatedCell] = useState({ row: 0, col: 0 });
   useEffect(() => {
     fetch("/example.lss")
       .then((response) => response.text())
@@ -58,7 +58,6 @@ const App = () => {
           { value: formatTime(split.goldMs) },
         ]);
         setData(updatedData);
-        prevDataRef.current = updatedData;
       })
       .catch((error) => console.error("Error loading XML:", error));
   }, []);
@@ -66,74 +65,101 @@ const App = () => {
   const columnLabels = Object.values(ColumnLabels);
   const rowLabels = splits.map((split, index) => [index + 1]);
 
-  const getChangedColumn = (prevData, newData) => {
-    for (let row = 0; row < newData.length; row++) {
-      for (let col = 0; col < newData[row].length; col++) {
-        if (newData[row][col].value !== prevData[row][col].value) {
-          return { row, col };
-        }
-      }
-    }
-    return null;
-  };
-
   const onSegmentTimeChange = (row, col, newData) => {
-    let prevSplitTime =
+    const segmentTimeMs = timeToMs(newData[row][col].value);
+    if (isNaN(segmentTimeMs)) return;
+
+    const prevSplitTimeMs =
       row === 0
         ? 0
-        : newData[row - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value;
-    let currentSegment = newData[row][col].value;
+        : timeToMs(
+            newData[row - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value
+          );
+    if (isNaN(prevSplitTimeMs)) return;
 
-    prevSplitTime = row === 0 ? 0 : prevSplitTime;
+    const newSplitTimeMs = prevSplitTimeMs + segmentTimeMs;
+    if (newSplitTimeMs < 0) return;
 
     newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value =
-      formatTime(prevSplitTime + currentSegment);
+      formatTime(newSplitTimeMs);
 
-    onSplitTimeChange(row, newData);
+    for (let i = row + 1; i < splits.length; i++) {
+      const segmentTimeMs = timeToMs(
+        newData[i][columnLabels.indexOf(ColumnLabels.SegmentTime)].value
+      );
+      if (isNaN(segmentTimeMs)) return;
+
+      const prevSplitTimeMs = timeToMs(
+        newData[i - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value
+      );
+      if (isNaN(prevSplitTimeMs)) return;
+
+      const newSplitTimeMs = prevSplitTimeMs + segmentTimeMs;
+      if (newSplitTimeMs < 0) return;
+
+      newData[i][columnLabels.indexOf(ColumnLabels.SplitTime)].value =
+        formatTime(newSplitTimeMs);
+    }
   };
 
   const onSplitTimeChange = (row, newData) => {
-    let sumAsMs =
+    const splitTimeMs = timeToMs(
+      newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value
+    );
+    if (isNaN(splitTimeMs)) return;
+
+    const prevSplitTimeMs =
       row === 0
-        ? newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value
-        : newData[row][columnLabels.indexOf(ColumnLabels.SplitTime)].value -
-          newData[row - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value;
+        ? 0
+        : timeToMs(
+            newData[row - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value
+          );
+    if (isNaN(prevSplitTimeMs)) return;
+
+    const newSegmentTimeMs = splitTimeMs - prevSplitTimeMs;
+    if (newSegmentTimeMs < 0) return;
 
     newData[row][columnLabels.indexOf(ColumnLabels.SegmentTime)].value =
-      formatTime(sumAsMs);
+      formatTime(newSegmentTimeMs);
 
     for (let i = row + 1; i < splits.length; i++) {
-      sumAsMs =
-        newData[i - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value +
-        newData[i][columnLabels.indexOf(ColumnLabels.SegmentTime)].value;
+      const segmentTimeMs = timeToMs(
+        newData[i][columnLabels.indexOf(ColumnLabels.SegmentTime)].value
+      );
+      if (isNaN(segmentTimeMs)) return;
+
+      const prevSplitTimeMs = timeToMs(
+        newData[i - 1][columnLabels.indexOf(ColumnLabels.SplitTime)].value
+      );
+      if (isNaN(prevSplitTimeMs)) return;
+
+      const newSplitTimeMs = prevSplitTimeMs + segmentTimeMs;
+      if (newSplitTimeMs < 0) return;
 
       newData[i][columnLabels.indexOf(ColumnLabels.SplitTime)].value =
-        formatTime(sumAsMs);
+        formatTime(newSplitTimeMs);
     }
   };
 
   const handleChange = (newData) => {
-    const prevData = prevDataRef.current;
-    const change = getChangedColumn(prevData, newData);
-
-    if (change) {
-      const { row, col } = change;
-      newData[row][col].value = timeToMs(newData[row][col].value);
-      switch (col) {
-        case columnLabels.indexOf(ColumnLabels.SegmentTime): {
-          onSegmentTimeChange(row, col, newData);
-          break;
-        }
-        case columnLabels.indexOf(ColumnLabels.SplitTime): {
-          onSplitTimeChange(row, newData);
-          break;
-        }
-        default:
-          break;
+    const row = activatedCell.row;
+    const col = activatedCell.column;
+    switch (col) {
+      case columnLabels.indexOf(ColumnLabels.SegmentTime): {
+        onSegmentTimeChange(row, col, newData);
+        break;
       }
+      case columnLabels.indexOf(ColumnLabels.SplitTime): {
+        onSplitTimeChange(row, newData);
+        break;
+      }
+      default:
+        break;
+    }
 
+    // Only update state if newData is different from current data
+    if (!_.isEqual(data, newData)) {
       setData(newData);
-      prevDataRef.current = newData;
     }
   };
 
@@ -142,9 +168,10 @@ const App = () => {
       <h1>Splits</h1>
       <Spreadsheet
         data={data}
-        onChange={handleChange}
         columnLabels={columnLabels}
         rowLabels={rowLabels}
+        onChange={handleChange}
+        onActivate={setActivatedCell}
       />
       <h2>Total Time we have to work with: {formatTime(totalTime)}</h2>
     </div>
